@@ -104,19 +104,23 @@ python test_tiny_log.py -v
 
 ## Ecosystem
 
-Part of the **tiny-*** zero-dependency toolkit:
+Part of the **tiny-*** zero-dependency toolkit for Python agent infrastructure:
 
-- [tiny-router](https://github.com/hussain-alsaibai/tiny-router) — HTTP routing
-- [tiny-log](https://github.com/hussain-alsaibai/tiny-log) — Logging (this repo)
-- [tiny-validator](https://github.com/hussain-alsaibai/tiny-validator) — Input validation
-- [tiny-cli](https://github.com/hussain-alsaibai/tiny-cli) — CLI parser
-- [tiny-config](https://github.com/hussain-alsaibai/tiny-config) — Config loader
-- [fast-cache](https://github.com/hussain-alsaibai/fast-cache) — In-memory cache
-- [tiny-mcp](https://github.com/hussain-alsaibai/tiny-mcp) — MCP server
-- [tiny-agent](https://github.com/hussain-alsaibai/tiny-agent) — Agent framework
-- [tiny-embed](https://github.com/hussain-alsaibai/tiny-embed) — Embeddings
-- [snapdb](https://github.com/hussain-alsaibai/snapdb) — Embedded DB
+- [**tiny-router**](https://github.com/hussain-alsaibai/tiny-router) — HTTP router, 76K req/s
+- [**tiny-log**](https://github.com/hussain-alsaibai/tiny-log) — structured logging
+- [**tiny-validator**](https://github.com/hussain-alsaibai/tiny-validator) — input validation, 247K val/s
+- [**tiny-config**](https://github.com/hussain-alsaibai/tiny-config) — layered config loader
+- [**tiny-cli**](https://github.com/hussain-alsaibai/tiny-cli) — CLI builder with colors
+- [**fast-cache**](https://github.com/hussain-alsaibai/fast-cache) — LRU + TTL + SWR cache
+- [**tiny-rate**](https://github.com/hussain-alsaibai/tiny-rate) — rate limiter (token / fixed / sliding)
+- [**tiny-retry**](https://github.com/hussain-alsaibai/tiny-retry) — retry + backoff + circuit breaker
+- [**tiny-pool**](https://github.com/hussain-alsaibai/tiny-pool) — ThreadPool + AsyncPool
+- [**tiny-agent**](https://github.com/hussain-alsaibai/tiny-agent) — zero-dep agent framework
+- [**tiny-mcp**](https://github.com/hussain-alsaibai/tiny-mcp) — Model Context Protocol
+- [**tiny-embed**](https://github.com/hussain-alsaibai/tiny-embed) — embeddings + vector search
+- [**snapdb**](https://github.com/hussain-alsaibai/snapdb) — embedded DB
 
+12 repos, ~5,200 LOC, zero dependencies across the entire stack. All single-file, MIT, fully type-hinted. Built by [OpenClaw](https://github.com/hussain-alsaibai).
 ## License
 
 MIT — see [LICENSE](LICENSE).
