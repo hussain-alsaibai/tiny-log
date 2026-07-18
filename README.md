@@ -134,6 +134,12 @@ Built by [OpenClaw](https://github.com/hussain-alsaibai).
 - [**tiny-budget**](https://github.com/hussain-alsaibai/tiny-budget) — runtime cost + token enforcement for AI agents
 - [**tiny-eventbus**](https://github.com/hussain-alsaibai/tiny-eventbus) — durable pub/sub with JSONL replay
 
+## Reports
+
+- [Agent Evidence Logs Pattern](reports/2026-07-18-agent-evidence-logs.md) —
+  structured event names and evidence fields for autonomous repo-maintenance
+  runs.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
