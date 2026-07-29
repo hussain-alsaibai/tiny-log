@@ -5,20 +5,23 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](tiny_log.py)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue)](https://github.com/hussain-alsaibai/tiny-log)
 [![Part of the tiny-* ecosystem](https://img.shields.io/badge/tiny--*-ecosystem-purple.svg)](#ecosystem)
 
-`tiny-log` is a single-file structured logger. JSON or pretty-printed text, with `LogContext` for correlation IDs, bound loggers, file rotation, and a `log_call` timing helper. Built on Python's stdlib `logging` — no `structlog`, no `loguru`, no `python-json-logger`.
+`tiny-log` is a single-file structured logger. JSON or pretty-printed text, with `LogContext` for correlation IDs, bound loggers, file rotation, `log_call` / `log_call_async` timing helpers. Built on Python's stdlib `logging` — no `structlog`, no `loguru`, no `python-json-logger`.
 
 ## ✨ Features
 
 - **🪶 Zero dependencies** — stdlib `logging` + `json` only
 - **📦 Single file** — drop `tiny_log.py` anywhere
-- **🧾 JSON or pretty text** — auto-detects TTY
-- **🔗 Correlation IDs** — `LogContext` context manager
+- **🧾 JSON or pretty text** — auto-detects TTY, or force either mode
+- **🔗 Correlation IDs** — `LogContext` context manager for trace propagation
 - **📌 Bound loggers** — `log.bind(service="api")` to attach permanent fields
-- **🌀 File rotation** — `RotatingFileHandler` wrapper, 5 backups
-- **⏱️ `log_call`** — time and log any function call
-- **⚠️ Captures warnings** — `warnings` module gets piped in
+- **🌀 File rotation** — `file_handler()` wrapper around stdlib `RotatingFileHandler`
+- **⏱️ `log_call` & `log_call_async`** — time any sync or async function
+- **🆔 Trace IDs** — `new_trace_id()` generates OpenTelemetry-compatible IDs
+- **⚠️ Captures warnings** — `warnings` module gets piped to logging
+- **🔧 Safe serialization** — `default=str` fallback for non-serializable objects
 
 ## 🚀 Quick Start
 
@@ -41,8 +44,9 @@ with LogContext(request_id=new_request_id()):
 ## 🧾 JSON vs Text
 
 ```python
-configure(level="DEBUG", json=True)   # one JSON object per line
-configure(level="DEBUG", json=False, color=True)  # human-readable
+configure(level="DEBUG", json=True)              # one JSON object per line
+configure(level="DEBUG", json=False, color=True) # human-readable
+configure(level="INFO", force_json=True)          # JSON even in TTY
 ```
 
 In a TTY, default is `color=True` text. In a pipe/CI, default is JSON.
@@ -50,36 +54,59 @@ In a TTY, default is `color=True` text. In a pipe/CI, default is JSON.
 ## 🔗 Context
 
 ```python
+# Manual context
 with LogContext(request_id="abc", user_id=42):
     log.info("step 1")
-    with LogContext(retry=2):  # nested
-        log.warning("retrying")
+
+# With generated request ID
+with LogContext.from_request_id():
+    log.info("auto-id")
+
+# Nested context (merges)
+with LogContext(trace_id="abc"):
+    with LogContext(span_id="def"):
+        log.info("nested")
 ```
 
 ## 📌 Bound Loggers
 
 ```python
 log = get_logger("svc").bind(service="api", region="us-east")
-log.info("started")  # service and region auto-included
+log.info("started")  # service and region auto-included in every message
 ```
 
 ## 🌀 File Rotation
 
 ```python
 from tiny_log import file_handler
+
 handler = file_handler("/var/log/myapp/app.log", max_bytes=50_000_000, backup_count=10)
 logging.getLogger().addHandler(handler)
 ```
 
-## ⏱️ Timing Helper
+## ⏱️ Timing Helpers
 
 ```python
-from tiny_log import log_call
+from tiny_log import log_call, log_call_async
 
+# Sync
 def fetch(url): return ...
-
 result = log_call(log, "fetch", fetch, "https://api.example.com")
-# logs: "fetch ok" with op=fetch, ms=124
+
+# Async
+async def fetch_async(url): return ...
+result = await log_call_async(log, "fetch", fetch_async, "https://api.example.com")
+# Both log: "fetch ok" with op=fetch, ms=<duration>
+```
+
+## 🆔 Trace IDs
+
+```python
+from tiny_log import new_trace_id, LogContext
+
+with LogContext(trace_id=new_trace_id()):
+    log.info("traceable")
+    # The trace_id (24 hex chars) is compatible with OpenTelemetry W3C trace context
 ```
 
 ## 📊 Comparison
@@ -92,53 +119,64 @@ result = log_call(log, "fetch", fetch, "https://api.example.com")
 | Bound fields | ✅ | ✅ | ✅ |
 | Context vars | ✅ | ✅ | ✅ |
 | File rotation | ✅ (stdlib) | needs config | ✅ |
-| Time-it helper | ✅ | ❌ | ❌ |
+| Time-it helper (sync + async) | ✅ | ❌ | ❌ |
+| Trace IDs | ✅ | ❌ | ❌ |
+| `force_json` TTY override | ✅ | ❌ | ❌ |
 
 **Use `tiny-log` when** you want fast, clean, structured output and refuse to install another logging library for what Python's `logging` already does well.
 
 ## 🧪 Testing
 
 ```bash
-python test_tiny_log.py -v
+python -m pytest test_tiny_log.py -v
 ```
+
+## 🔧 API Reference
+
+### Core
+
+| Function | Description |
+|---|---|
+| `configure(level, json, color, stream, capture_warnings, force_json)` | Configure root logger |
+| `get_logger(name)` | Get a TinyLogger instance |
+| `LogContext(**values)` | Context manager that merges values into all log records |
+| `LogContext.from_request_id(rid)` | Create context with a request_id |
+| `current_context()` | Get current context dict |
+| `new_request_id(length)` | Generate short unique ID |
+| `new_trace_id()` | Generate OTel-compatible 24-char trace ID |
+| `file_handler(path, level, json, max_bytes, backup_count)` | Rotating file handler factory |
+| `log_call(logger, op, fn, *args, **kwargs)` | Time and log a sync function |
+| `log_call_async(logger, op, fn, *args, **kwargs)` | Time and log an async function |
+
+### Logging methods
+
+`log.debug(msg, extra)`, `log.info(msg, extra)`, `log.warning(msg, extra)`, `log.error(msg, extra)`, `log.critical(msg, extra)`, `log.exception(msg, extra)`
+
+### Bound logger
+
+`log.bind(service="api")` returns a `BoundLogger` that merges these values into every call.
 
 ## Ecosystem
 
-Part of the **tiny-*** zero-dependency toolkit for Python agent infrastructure:
+Part of the **tiny-*** zero-dependency toolkit for Python agent infrastructure. All single-file, MIT, fully type-hinted.
 
-- [**tiny-router**](https://github.com/hussain-alsaibai/tiny-router) — HTTP router, 76K req/s
-- [**tiny-log**](https://github.com/hussain-alsaibai/tiny-log) — structured logging
-- [**tiny-validator**](https://github.com/hussain-alsaibai/tiny-validator) — input validation, 247K val/s
-- [**tiny-config**](https://github.com/hussain-alsaibai/tiny-config) — layered config loader
-- [**tiny-cli**](https://github.com/hussain-alsaibai/tiny-cli) — CLI builder with colors
-- [**fast-cache**](https://github.com/hussain-alsaibai/fast-cache) — LRU + TTL + SWR cache
-- [**tiny-rate**](https://github.com/hussain-alsaibai/tiny-rate) — rate limiter (token / fixed / sliding)
-- [**tiny-retry**](https://github.com/hussain-alsaibai/tiny-retry) — retry + backoff + circuit breaker
-- [**tiny-pool**](https://github.com/hussain-alsaibai/tiny-pool) — ThreadPool + AsyncPool
-- [**tiny-agent**](https://github.com/hussain-alsaibai/tiny-agent) — zero-dep agent framework
-- [**tiny-mcp**](https://github.com/hussain-alsaibai/tiny-mcp) — Model Context Protocol
-- [**tiny-embed**](https://github.com/hussain-alsaibai/tiny-embed) — embeddings + vector search
-- [**tiny-compose**](https://github.com/hussain-alsaibai/tiny-compose) — Stack any decorators in any order, declaratively
-- [**tiny-trace**](https://github.com/hussain-alsaibai/tiny-trace) — OTel-compatible tracing, sync + async, W3C propagation
-- [**tiny-secret**](https://github.com/hussain-alsaibai/tiny-secret) — Zero-dep secret loader + redacting printer
-- [**snapdb**](https://github.com/hussain-alsaibai/snapdb) — embedded DB
+| Package | Description | Version |
+|---|---|---|
+| [**tiny-agent**](https://github.com/hussain-alsaibai/tiny-agent) | Zero-dep agent framework | ✅ |
+| [**tiny-router**](https://github.com/hussain-alsaibai/tiny-router) | HTTP router | ✅ |
+| [**tiny-validator**](https://github.com/hussain-alsaibai/tiny-validator) | Input validation | ✅ |
+| [**tiny-config**](https://github.com/hussain-alsaibai/tiny-config) | Layered config loader | ✅ |
+| [**tiny-cli**](https://github.com/hussain-alsaibai/tiny-cli) | CLI builder with colors | ✅ |
+| [**fast-cache**](https://github.com/hussain-alsaibai/fast-cache) | LRU + TTL + SWR cache | ✅ |
+| [**tiny-log**](https://github.com/hussain-alsaibai/tiny-log) | ✨ Structured logging | **0.2.0** |
+| [**tiny-mcp**](https://github.com/hussain-alsaibai/tiny-mcp) | Model Context Protocol | ✅ |
+| [**snapdb**](https://github.com/hussain-alsaibai/snapdb) | Embedded in-memory DB | ✅ |
+| [**tiny-metrics**](https://github.com/hussain-alsaibai/tiny-metrics) | Prometheus metrics | ✅ |
+| [**tiny-cron**](https://github.com/hussain-alsaibai/tiny-cron) | Cron scheduler | ✅ |
 
-23 repos, ~7,800 LOC, zero dependencies across the entire stack. All single-file, MIT, fully type-hinted.
-
-Latest additions: [`tiny-metrics`](https://github.com/hussain-alsaibai/tiny-metrics), [`tiny-timeout`](https://github.com/hussain-alsaibai/tiny-timeout), [`tiny-idempotency`](https://github.com/hussain-alsaibai/tiny-idempotency), [`tiny-budget`](https://github.com/hussain-alsaibai/tiny-budget), [`tiny-eventbus`](https://github.com/hussain-alsaibai/tiny-eventbus).
+23+ repos, ~8,000 LOC, zero dependencies across the entire stack.
 
 Built by [OpenClaw](https://github.com/hussain-alsaibai).
-- [**tiny-cron**](https://github.com/hussain-alsaibai/tiny-cron) — cron-style scheduler + intervals
-- [**tiny-flags**](https://github.com/hussain-alsaibai/tiny-flags) — feature flags, percentage rollout
-- [**tiny-queue**](https://github.com/hussain-alsaibai/tiny-queue) — persistent FIFO queue, retries
-- [**tiny-budget**](https://github.com/hussain-alsaibai/tiny-budget) — runtime cost + token enforcement for AI agents
-- [**tiny-eventbus**](https://github.com/hussain-alsaibai/tiny-eventbus) — durable pub/sub with JSONL replay
-
-## Reports
-
-- [Agent Evidence Logs Pattern](reports/2026-07-18-agent-evidence-logs.md) —
-  structured event names and evidence fields for autonomous repo-maintenance
-  runs.
 
 ## License
 

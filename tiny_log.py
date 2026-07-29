@@ -25,10 +25,10 @@ import time
 import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone
-from typing import Any, Callable, TextIO
+from typing import Any, Awaitable, Callable, TextIO
 
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 # ---------- Context (correlation IDs) ----------
@@ -62,13 +62,24 @@ class LogContext:
     def bind(self, **more: Any) -> "LogContext":
         return LogContext(**{**self._values, **more})
 
+    @classmethod
+    def from_request_id(cls, request_id: str | None = None) -> "LogContext":
+        """Create a LogContext with a new or given request_id."""
+        return cls(request_id=request_id or new_request_id())
+
 
 def current_context() -> dict[str, Any]:
     return dict(_context.get())
 
 
-def new_request_id() -> str:
-    return uuid.uuid4().hex[:16]
+def new_request_id(length: int = 16) -> str:
+    """Generate a short, unique request ID."""
+    return uuid.uuid4().hex[:length]
+
+
+def new_trace_id() -> str:
+    """Generate a trace ID (24 hex chars, compatible with OpenTelemetry)."""
+    return uuid.uuid4().hex[:24]
 
 
 # ---------- Formatters ----------
@@ -139,7 +150,7 @@ class JsonFormatter(logging.Formatter):
         if record.stack_info:
             payload["stack"] = record.stack_info
 
-        return json.dumps(payload, ensure_ascii=self._ensure_ascii, sort_keys=self._sort_keys)
+        return json.dumps(payload, ensure_ascii=self._ensure_ascii, sort_keys=self._sort_keys, default=str)
 
 
 class TextFormatter(logging.Formatter):
@@ -194,8 +205,18 @@ def configure(
     color: bool = True,
     stream: TextIO | None = None,
     capture_warnings: bool = True,
+    force_json: bool = False,
 ) -> logging.Logger:
-    """Configure the root logger. Safe to call multiple times."""
+    """Configure the root logger. Safe to call multiple times.
+
+    Args:
+        level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+        json: If True, emit JSON; if None, auto-detect (JSON in pipes, text in TTY).
+        color: Use ANSI colors (only applies to text mode).
+        stream: Output stream (default: stderr).
+        capture_warnings: Pipe Python warnings through logging.
+        force_json: Skip auto-detect and always use JSON format.
+    """
     global _CONFIGURED
 
     if isinstance(level, str):
@@ -203,6 +224,10 @@ def configure(
 
     root = logging.getLogger()
     root.setLevel(level)
+
+    if force_json:
+        json = True
+        color = False
 
     # Remove our own handlers (don't touch handlers we didn't add)
     to_remove = [h for h in root.handlers if getattr(h, "_tiny_log", False)]
@@ -339,13 +364,17 @@ def file_handler(
 
 
 def log_call(
-    logger: TinyLogger,
+    logger: TinyLogger | BoundLogger,
     op: str,
     fn: Callable[..., Any],
     *args: Any,
     **kwargs: Any,
 ) -> Any:
-    """Run fn, logging duration. Returns the function's result."""
+    """Run fn, logging duration. Returns the function's result.
+
+    Usage:
+        result = log_call(log, "db.query", db.query, user_id=42)
+    """
     t0 = time.perf_counter()
     try:
         result = fn(*args, **kwargs)
@@ -359,17 +388,46 @@ def log_call(
         raise
 
 
+def log_call_async(
+    logger: TinyLogger | BoundLogger,
+    op: str,
+    fn: Callable[..., Awaitable[Any]],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Async version of log_call. Awaitable.
+
+    Usage:
+        result = await log_call_async(log, "api.fetch", fetch_data, user_id=42)
+    """
+    async def _wrapper() -> Any:
+        t0 = time.perf_counter()
+        try:
+            result = await fn(*args, **kwargs)
+            logger.info(f"{op} ok", extra={"op": op, "ms": int((time.perf_counter() - t0) * 1000)})
+            return result
+        except Exception as exc:
+            logger.error(
+                f"{op} failed: {exc}",
+                extra={"op": op, "ms": int((time.perf_counter() - t0) * 1000)},
+            )
+            raise
+    return _wrapper()
+
+
 __all__ = [
     "configure",
     "get_logger",
     "LogContext",
     "current_context",
     "new_request_id",
+    "new_trace_id",
     "JsonFormatter",
     "TextFormatter",
     "TinyLogger",
     "BoundLogger",
     "file_handler",
     "log_call",
+    "log_call_async",
     "__version__",
 ]
