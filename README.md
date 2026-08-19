@@ -170,6 +170,9 @@ Part of the **tiny-*** zero-dependency toolkit for Python agent infrastructure. 
 | [**fast-cache**](https://github.com/hussain-alsaibai/fast-cache) | LRU + TTL + SWR cache | ✅ |
 | [**tiny-log**](https://github.com/hussain-alsaibai/tiny-log) | ✨ Structured logging | **0.2.0** |
 | [**tiny-mcp**](https://github.com/hussain-alsaibai/tiny-mcp) | Model Context Protocol | ✅ |
+| [**tiny-circuit**](https://github.com/hussain-alsaibai/tiny-circuit) | Circuit breaker, fault tolerance | ✅ |
+| [**tiny-semaphore**](https://github.com/hussain-alsaibai/tiny-semaphore) | Async concurrency limiter | ✅ |
+| [**tiny-rate-limiter**](https://github.com/hussain-alsaibai/tiny-rate-limiter) | Token bucket + sliding window | ✅ |
 | [**snapdb**](https://github.com/hussain-alsaibai/snapdb) | Embedded in-memory DB | ✅ |
 | [**tiny-metrics**](https://github.com/hussain-alsaibai/tiny-metrics) | Prometheus metrics | ✅ |
 | [**tiny-cron**](https://github.com/hussain-alsaibai/tiny-cron) | Cron scheduler | ✅ |
