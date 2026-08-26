@@ -17,18 +17,37 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
+import functools
+import inspect
 import json
 import logging
 import os
+import random
 import sys
 import time
 import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, TextIO
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    TextIO,
+    TypeVar,
+    Union,
+    overload,
+)
 
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
+
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 # ---------- Context (correlation IDs) ----------
@@ -80,6 +99,123 @@ def new_request_id(length: int = 16) -> str:
 def new_trace_id() -> str:
     """Generate a trace ID (24 hex chars, compatible with OpenTelemetry)."""
     return uuid.uuid4().hex[:24]
+
+
+def snapshot() -> dict[str, Any]:
+    """Return a dict of the current logger context.
+
+    Useful for debugging — inspect the current context values at any point.
+
+    Example:
+        with LogContext(request_id="abc", user_id=42):
+            data = log_snapshot()
+            print(data)  # {"request_id": "abc", "user_id": 42}
+    """
+    return current_context()
+
+
+# ---------- Field formatters ----------
+
+
+# ANSI color codes (foreground)
+_ANSI_COLORS = {
+    "black": "\x1b[30m",
+    "red": "\x1b[31m",
+    "green": "\x1b[32m",
+    "yellow": "\x1b[33m",
+    "blue": "\x1b[34m",
+    "magenta": "\x1b[35m",
+    "cyan": "\x1b[36m",
+    "white": "\x1b[37m",
+    "grey": "\x1b[90m",
+    "bright_red": "\x1b[91m",
+    "bright_green": "\x1b[92m",
+    "bright_yellow": "\x1b[93m",
+    "bright_blue": "\x1b[94m",
+    "bright_magenta": "\x1b[95m",
+    "bright_cyan": "\x1b[96m",
+    "bright_white": "\x1b[97m",
+    "bold": "\x1b[1m",
+    "dim": "\x1b[2m",
+    "underline": "\x1b[4m",
+    "reset": "\x1b[0m",
+}
+
+
+class ColoredString(str):
+    """A string subclass carrying an ANSI color tag.
+
+    Both `JsonFormatter` and `TextFormatter` honor the tag: JSON includes a
+    `_color` field alongside the value, text mode embeds the actual escape
+    codes so it shows up colored in a TTY.
+    """
+
+    __slots__ = ("_tiny_color",)
+
+    def __new__(cls, value: str, color: str | None = None) -> "ColoredString":
+        instance = super().__new__(cls, value)
+        instance._tiny_color = color
+        return instance
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetic only
+        return f"ColoredString({str.__repr__(self)}, color={self._tiny_color!r})"
+
+
+def color(text: Any, name: str = "reset") -> ColoredString:
+    """Wrap a value in an ANSI-colored string.
+
+    Usage:
+        log.info("user", extra={"role": color("admin", "bright_red")})
+
+    When logged via JsonFormatter, the color name is preserved in a `_color`
+    field. When logged via TextFormatter, the actual ANSI codes are emitted
+    so the text shows up colored in a TTY.
+    """
+    return ColoredString(str(text), name)
+
+
+def json_field(data: Any, *, indent: int | None = 2, ensure_ascii: bool = False) -> str:
+    """Serialize a value to a compact or pretty-printed JSON string.
+
+    Useful when you want a JSON object embedded inline in another log field
+    rather than merged into the surrounding payload.
+
+    Usage:
+        log.info("request", extra={"payload": json_field({"a": 1, "b": [1,2,3]})})
+    """
+    return json.dumps(data, indent=indent, ensure_ascii=ensure_ascii, default=str, sort_keys=False)
+
+
+def bytes_human(n: int | float, *, precision: int | None = 1) -> str:
+    """Render a byte count as a human-readable string (e.g. ``"1.5 MB"``).
+
+    Supports B, KB, MB, GB, TB, PB. Negative values are formatted with a
+    minus prefix. Whole-number magnitudes (``512 B``, ``1024 B -> 1 KB``)
+    drop the decimal point entirely so they read naturally.
+
+    Usage:
+        log.info("downloaded", extra={"size": bytes_human(1_572_864)})
+        # -> {"size": "1.5 MB"}
+    """
+    if n != n:  # NaN guard
+        return "NaN B"
+    sign = "-" if n < 0 else ""
+    n = abs(n)
+    units = ("B", "KB", "MB", "GB", "TB", "PB")
+    if n == 0:
+        return "0 B"
+    idx = 0
+    value = float(n)
+    while value >= 1024 and idx < len(units) - 1:
+        value /= 1024.0
+        idx += 1
+    # Drop decimals when the value is integral at the requested precision.
+    eff_precision = max(0, precision if precision is not None else 1)
+    if eff_precision == 0 or value == int(value):
+        rendered = f"{int(value)}"
+    else:
+        rendered = f"{value:.{eff_precision}f}"
+    return f"{sign}{rendered} {units[idx]}"
 
 
 # ---------- Formatters ----------
@@ -138,6 +274,10 @@ class JsonFormatter(logging.Formatter):
                 continue
             if key in payload:
                 continue
+            if isinstance(value, ColoredString):
+                payload[key] = str(value)
+                payload[f"{key}_color"] = value._tiny_color  # type: ignore[attr-defined]
+                continue
             try:
                 json.dumps(value)
                 payload[key] = value
@@ -173,7 +313,8 @@ class TextFormatter(logging.Formatter):
         ts = datetime.fromtimestamp(record.created, tz=timezone.utc).strftime("%H:%M:%S.%f")[:-3]
         level = record.levelname
         prefix = f"{ts} {level:<8} {record.name}"
-        if self._color and level in self.COLORS and sys.stderr.isatty():
+        is_tty = sys.stderr.isatty()
+        if self._color and level in self.COLORS and is_tty:
             prefix = f"{self.COLORS[level]}{prefix}{self.RESET}"
         line = f"{prefix} | {record.getMessage()}"
         ctx = _context.get()
@@ -185,6 +326,14 @@ class TextFormatter(logging.Formatter):
                 continue
             if key in {"request_id", "user_id", "trace_id"}:
                 line += f"  {key}={value}"
+                continue
+            if isinstance(value, ColoredString):
+                code = _ANSI_COLORS.get(value._tiny_color, "")  # type: ignore[attr-defined]
+                if self._color and is_tty and code:
+                    line += f"  {key}={code}{value}{self.RESET}"
+                else:
+                    line += f"  {key}={value}"
+                continue
         if record.exc_info:
             line += "\n" + self.formatException(record.exc_info)
         return line
@@ -265,6 +414,7 @@ class TinyLogger:
 
     def __init__(self, logger: logging.Logger) -> None:
         self._log = logger
+        self._filters: List[Callable[[str, Any], bool]] = []
 
     @property
     def level(self) -> int:
@@ -273,7 +423,19 @@ class TinyLogger:
     def set_level(self, level: str | int) -> None:
         self._log.setLevel(level if isinstance(level, int) else getattr(logging, level.upper()))
 
+    def add_filter(self, fn: Callable[[str, Any], bool]) -> "TinyLogger":
+        """Add a filter function. Return False to drop the log call."""
+        self._filters.append(fn)
+        return self
+
     def _log_at(self, level: int, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        # Run filters
+        for f in self._filters:
+            try:
+                if not f(msg, extra or {}):
+                    return
+            except Exception:
+                pass
         merged: dict[str, Any] = dict(extra or {})
         merged.update(kwargs)
         self._log.log(level, msg, extra=merged)
@@ -294,6 +456,12 @@ class TinyLogger:
         self._log_at(logging.CRITICAL, msg, extra=extra, **kwargs)
 
     def exception(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        for f in self._filters:
+            try:
+                if not f(msg, extra or {}):
+                    return
+            except Exception:
+                pass
         merged: dict[str, Any] = dict(extra or {})
         merged.update(kwargs)
         self._log.exception(msg, extra=merged)
@@ -415,19 +583,302 @@ def log_call_async(
     return _wrapper()
 
 
+# ---------- Sampling handler ----------
+
+
+class SamplingHandler(logging.Handler):
+    """A logging handler that drops records based on a per-level sample rate.
+
+    Useful when DEBUG-level logging is high volume but you only want to keep
+    a fraction of records (e.g. 1 in 100). WARNING/ERROR records are usually
+    kept at 100% so failures aren't lost.
+
+    Args:
+        rates: Mapping of level name -> keep ratio in ``[0.0, 1.0]``. A rate
+            of ``1.0`` keeps every record; ``0.1`` keeps ~10%. Levels not in
+            the mapping default to ``1.0`` (keep everything). Level names are
+            case-insensitive.
+        seed: Optional seed for deterministic sampling — handy in tests.
+        target: Optional downstream handler to forward sampled records to.
+            If ``None`` the handler still emits a ``LogRecord`` that flows
+            through the standard logger hierarchy, but its only behaviour is
+            filtering. Use this when you wire ``SamplingHandler`` between
+            a logger and its real output handler.
+
+    Usage:
+        import logging
+        root = logging.getLogger()
+        sampled = SamplingHandler(
+            rates={"DEBUG": 0.01, "INFO": 1.0, "WARNING": 1.0, "ERROR": 1.0},
+        )
+        sampled.setFormatter(JsonFormatter())
+        root.addHandler(sampled)
+    """
+
+    _DEFAULT_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+    def __init__(
+        self,
+        rates: Mapping[str, float] | None = None,
+        *,
+        seed: int | None = None,
+        target: logging.Handler | None = None,
+        level: int | str = logging.NOTSET,
+    ) -> None:
+        super().__init__(level=level)
+        self._rates: dict[str, float] = {}
+        for lvl in self._DEFAULT_LEVELS:
+            self._rates[lvl] = 1.0
+        if rates:
+            for k, v in rates.items():
+                key = str(k).upper()
+                if key not in self._rates:
+                    # Allow custom level names too — just register them.
+                    self._rates[key] = 1.0
+                # Clamp to [0, 1]
+                self._rates[key] = max(0.0, min(1.0, float(v)))
+        self._rng = random.Random(seed)
+        self._target = target
+
+    def should_sample(self, level: int) -> bool:  # pragma: no cover - trivial
+        """Return True if a record at ``level`` should be emitted."""
+        name = logging.getLevelName(level)
+        rate = self._rates.get(name, 1.0)
+        if rate >= 1.0:
+            return True
+        if rate <= 0.0:
+            return False
+        return self._rng.random() < rate
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if not self.should_sample(record.levelno):
+            return
+        if self._target is not None:
+            self._target.emit(record)
+        else:
+            # If no target handler is wired, default to stderr via stdlib
+            # StreamHandler machinery.
+            super().emit(record)
+
+    @property
+    def rates(self) -> dict[str, float]:
+        return dict(self._rates)
+
+    def set_rate(self, level: str, rate: float) -> None:
+        """Adjust the sample rate for a level at runtime."""
+        key = str(level).upper()
+        self._rates[key] = max(0.0, min(1.0, float(rate)))
+
+
+# ---------- Async logging ----------
+
+
+class TinyLogAsync:
+    """Async wrapper around a TinyLogger.
+
+    Each method schedules the underlying sync call on a worker thread via
+    ``asyncio.to_thread`` so the I/O cost of formatting/serialising never
+    blocks the event loop. The returned coroutine is fire-and-forget from
+    the caller's perspective; awaiting it ensures the log line is fully
+    flushed before continuing.
+
+    Usage:
+        log = get_logger("svc")
+        async def handle(req):
+            await TinyLogAsync(log).ainfo("processing", extra={"req_id": req.id})
+
+    For best results, configure JSON output (it's the slowest path).
+    """
+
+    def __init__(self, logger: TinyLogger | BoundLogger) -> None:
+        self._logger = logger
+
+    async def adebug(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        await asyncio.to_thread(self._logger.debug, msg, extra=extra, **kwargs)
+
+    async def ainfo(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        await asyncio.to_thread(self._logger.info, msg, extra=extra, **kwargs)
+
+    async def awarning(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        await asyncio.to_thread(self._logger.warning, msg, extra=extra, **kwargs)
+
+    async def aerror(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        await asyncio.to_thread(self._logger.error, msg, extra=extra, **kwargs)
+
+    async def acritical(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        await asyncio.to_thread(self._logger.critical, msg, extra=extra, **kwargs)
+
+
+# ---------- Attach decorator ----------
+
+
+def _safe_repr(value: Any, max_len: int = 200) -> str:
+    try:
+        r = repr(value)
+    except Exception:
+        r = object.__repr__(value)
+    if len(r) > max_len:
+        r = r[: max_len - 1] + "\u2026"
+    return r
+
+
+def attach(
+    logger: TinyLogger | BoundLogger | None = None,
+    *,
+    op: str | None = None,
+    log_args: bool = True,
+    log_result: bool = True,
+    max_arg_len: int = 200,
+) -> Callable[[F], F]:
+    """Decorator that logs function entry and exit with args and return value.
+
+    Args:
+        logger: Logger to write to. Defaults to ``get_logger()`` at call time.
+        op: Operation name. Defaults to the function's qualified name.
+        log_args: Whether to include positional/keyword args in the entry log.
+        log_result: Whether to include the return value in the exit log.
+        max_arg_len: Maximum length for repr'd args/result before truncating.
+
+    The argument list is emitted under the ``fn_args`` field (not ``args``)
+    because ``args`` is a reserved stdlib LogRecord attribute.
+
+    Usage:
+        @attach()
+        def parse(s: str): ...
+    """
+
+    def decorator(fn: F) -> F:
+        op_name = op or f"{fn.__module__}.{fn.__qualname__}"
+
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            log = logger or get_logger()
+            if log_args:
+                args_repr = [_safe_repr(a, max_arg_len) for a in args]
+                kwargs_repr = {k: _safe_repr(v, max_arg_len) for k, v in kwargs.items()}
+                log.debug(
+                    f"-> {op_name}",
+                    extra={"op": op_name, "fn_args": args_repr, "fn_kwargs": kwargs_repr},
+                )
+            else:
+                log.debug(f"-> {op_name}", extra={"op": op_name})
+            t0 = time.perf_counter()
+            try:
+                result = fn(*args, **kwargs)
+            except Exception as exc:
+                ms = int((time.perf_counter() - t0) * 1000)
+                log.error(
+                    f"!! {op_name} failed: {exc}",
+                    extra={"op": op_name, "ms": ms, "exc_type": type(exc).__name__},
+                )
+                raise
+            ms = int((time.perf_counter() - t0) * 1000)
+            extra: dict[str, Any] = {"op": op_name, "ms": ms}
+            if log_result:
+                extra["result"] = _safe_repr(result, max_arg_len)
+            log.debug(f"<- {op_name}", extra=extra)
+            return result
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
+def attach_async(
+    logger: TinyLogger | BoundLogger | None = None,
+    *,
+    op: str | None = None,
+    log_args: bool = True,
+    log_result: bool = True,
+    max_arg_len: int = 200,
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+    """Async version of :func:`attach`.
+
+    Logs entry/exit at DEBUG, exceptions at ERROR. The decorated function
+    remains awaitable.
+
+    Usage:
+        @attach_async()
+        async def fetch(url): ...
+    """
+
+    def decorator(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+        op_name = op or f"{fn.__module__}.{fn.__qualname__}"
+
+        @functools.wraps(fn)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            log = logger or get_logger()
+            if log_args:
+                args_repr = [_safe_repr(a, max_arg_len) for a in args]
+                kwargs_repr = {k: _safe_repr(v, max_arg_len) for k, v in kwargs.items()}
+                log.debug(
+                    f"-> {op_name}",
+                    extra={"op": op_name, "fn_args": args_repr, "fn_kwargs": kwargs_repr},
+                )
+            else:
+                log.debug(f"-> {op_name}", extra={"op": op_name})
+            t0 = time.perf_counter()
+            try:
+                result = await fn(*args, **kwargs)
+            except Exception as exc:
+                ms = int((time.perf_counter() - t0) * 1000)
+                log.error(
+                    f"!! {op_name} failed: {exc}",
+                    extra={"op": op_name, "ms": ms, "exc_type": type(exc).__name__},
+                )
+                raise
+            ms = int((time.perf_counter() - t0) * 1000)
+            extra: dict[str, Any] = {"op": op_name, "ms": ms}
+            if log_result:
+                extra["result"] = _safe_repr(result, max_arg_len)
+            log.debug(f"<- {op_name}", extra=extra)
+            return result
+
+        return wrapper
+
+    return decorator
+
+
 __all__ = [
     "configure",
     "get_logger",
     "LogContext",
     "current_context",
+    "snapshot",
     "new_request_id",
     "new_trace_id",
+    "color",
+    "json_field",
+    "bytes_human",
+    "ColoredString",
     "JsonFormatter",
     "TextFormatter",
     "TinyLogger",
     "BoundLogger",
+    "TinyLogAsync",
+    "SamplingHandler",
     "file_handler",
     "log_call",
     "log_call_async",
+    "attach",
+    "attach_async",
     "__version__",
+    "structured",
 ]
+
+
+def structured(
+    data: dict[str, Any],
+    *,
+    level: str = "INFO",
+    logger: "TinyLogger | BoundLogger | None" = None,
+) -> None:
+    """Log a structured dict as a JSON line.
+
+    Useful for events, metrics, and audit logs that aren't "messages"
+    but should still go through the same pipeline.
+    """
+    if logger is None:
+        logger = get_logger("event")
+    lvl = getattr(logging, level.upper(), logging.INFO)
+    logger._log_at(lvl, "", extra={"_event": data})  # type: ignore[attr-defined]

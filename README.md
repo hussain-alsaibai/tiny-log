@@ -5,7 +5,7 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](tiny_log.py)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue)](https://github.com/hussain-alsaibai/tiny-log)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue)](https://github.com/hussain-alsaibai/tiny-log)
 [![Part of the tiny-* ecosystem](https://img.shields.io/badge/tiny--*-ecosystem-purple.svg)](#ecosystem)
 
 `tiny-log` is a single-file structured logger. JSON or pretty-printed text, with `LogContext` for correlation IDs, bound loggers, file rotation, `log_call` / `log_call_async` timing helpers. Built on Python's stdlib `logging` — no `structlog`, no `loguru`, no `python-json-logger`.
@@ -19,6 +19,11 @@
 - **📌 Bound loggers** — `log.bind(service="api")` to attach permanent fields
 - **🌀 File rotation** — `file_handler()` wrapper around stdlib `RotatingFileHandler`
 - **⏱️ `log_call` & `log_call_async`** — time any sync or async function
+- **⚡ `TinyLogAsync`** — async `ainfo`/`aerror`/`awarning`/`adebug` via `asyncio.to_thread`
+- **🎚️ `SamplingHandler`** — keep only N% of per-level log records (great for high-volume debug)
+- **🎨 Field formatters** — `color()`, `json_field()`, `bytes_human()` for rich log fields
+- **📸 `snapshot()`** — dump current context values for debugging
+- **🔁 `attach()` / `attach_async()`** — auto-log function entry/exit, args, and return values
 - **🆔 Trace IDs** — `new_trace_id()` generates OpenTelemetry-compatible IDs
 - **⚠️ Captures warnings** — `warnings` module gets piped to logging
 - **🔧 Safe serialization** — `default=str` fallback for non-serializable objects
@@ -99,6 +104,103 @@ result = await log_call_async(log, "fetch", fetch_async, "https://api.example.co
 # Both log: "fetch ok" with op=fetch, ms=<duration>
 ```
 
+## ⚡ Async Logging (TinyLogAsync)
+
+Run the (potentially slow) formatting/serialization on a worker thread so it
+never blocks your event loop.
+
+```python
+import asyncio
+from tiny_log import configure, get_logger, TinyLogAsync
+
+configure(level="INFO", json=True)
+log = get_logger("api")
+alog = TinyLogAsync(log)
+
+async def handler(req):
+    await alog.ainfo("processing", extra={"req_id": req["id"]})
+    await alog.aerror("oops", extra={"kind": "boom"})
+    await alog.awarning("slow", extra={"ms": 900})
+    await alog.adebug("cache miss", extra={"key": req["key"]})
+
+asyncio.run(handler({"id": 7, "key": "abc"}))
+```
+
+## 🎚️ Log Sampling (SamplingHandler)
+
+For high-volume DEBUG logging, keep only a fraction of records per level.
+Failures (WARNING/ERROR/CRITICAL) default to 100% so you never lose them.
+
+```python
+import logging
+from tiny_log import SamplingHandler, JsonFormatter, configure
+
+configure(level="DEBUG")
+
+sampled = SamplingHandler(
+    rates={"DEBUG": 0.01, "INFO": 0.2},  # 1% of DEBUG, 20% of INFO
+    seed=None,                             # optional: pass an int for determinism
+)
+sampled.setFormatter(JsonFormatter())
+logging.getLogger().addHandler(sampled)
+```
+
+You can adjust rates at runtime with `handler.set_rate("DEBUG", 0.5)` or
+inspect them via `handler.rates`, and wrap a downstream handler with the
+`target=` argument to chain filtering onto an existing pipeline.
+
+## 🎨 Field Formatters
+
+```python
+from tiny_log import color, json_field, bytes_human
+
+# ANSI-colored strings (JSON gets a *_color field; text mode emits escape codes)
+log.info("user", extra={"role": color("admin", "bright_red")})
+
+# Embed a JSON value inline as a string field
+log.info("request", extra={"payload": json_field({"a": 1, "b": [1, 2, 3]})})
+
+# Human-readable byte counts
+log.info("downloaded", extra={"size": bytes_human(1_572_864)})  # "1.5 MB"
+log.info("uploaded",  extra={"size": bytes_human(2 * 1024 ** 3)})  # "2 GB"
+```
+
+## 📸 Snapshot
+
+Dump the current context values for debugging:
+
+```python
+from tiny_log import LogContext, snapshot
+
+with LogContext(request_id="abc", user_id=42):
+    data = snapshot()          # {"request_id": "abc", "user_id": 42}
+    if data["user_id"] == 42:
+        log.info("matched")
+```
+
+## 🔁 Function Entry/Exit (attach)
+
+Automatically log a function's entry, exit, args, return value, and duration:
+
+```python
+from tiny_log import attach, attach_async
+
+@attach()
+def parse(raw: str):
+    return raw.strip().split(",")
+
+@attach_async()
+async def fetch(url: str):
+    return await http_get(url)
+
+# Override the operation name and kwargs:
+@attach(op="db.query", log_args=True, log_result=True, max_arg_len=500)
+def query(sql): ...
+```
+
+Entry lines log at DEBUG with `fn_args`/`fn_kwargs`; success at DEBUG with
+`result` and `ms`; exceptions at ERROR with `exc_type`.
+
 ## 🆔 Trace IDs
 
 ```python
@@ -147,6 +249,14 @@ python -m pytest test_tiny_log.py -v
 | `file_handler(path, level, json, max_bytes, backup_count)` | Rotating file handler factory |
 | `log_call(logger, op, fn, *args, **kwargs)` | Time and log a sync function |
 | `log_call_async(logger, op, fn, *args, **kwargs)` | Time and log an async function |
+| `TinyLogAsync(logger)` | Async wrapper exposing `ainfo`/`aerror`/`awarning`/`adebug`/`acritical` via `asyncio.to_thread` |
+| `SamplingHandler(rates, seed, target)` | Handler that samples records per-level |
+| `color(text, name)` | Wrap a value in an ANSI-colored string |
+| `json_field(data, indent, ensure_ascii)` | Serialize a value to a JSON string field |
+| `bytes_human(n, precision)` | Human-readable byte count |
+| `snapshot()` | Current context dict |
+| `attach(logger, op, log_args, log_result, max_arg_len)` | Decorator: log entry/exit/args/result |
+| `attach_async(...)` | Async version of `attach` |
 
 ### Logging methods
 
@@ -168,7 +278,7 @@ Part of the **tiny-*** zero-dependency toolkit for Python agent infrastructure. 
 | [**tiny-config**](https://github.com/hussain-alsaibai/tiny-config) | Layered config loader | ✅ |
 | [**tiny-cli**](https://github.com/hussain-alsaibai/tiny-cli) | CLI builder with colors | ✅ |
 | [**fast-cache**](https://github.com/hussain-alsaibai/fast-cache) | LRU + TTL + SWR cache | ✅ |
-| [**tiny-log**](https://github.com/hussain-alsaibai/tiny-log) | ✨ Structured logging | **0.2.0** |
+| [**tiny-log**](https://github.com/hussain-alsaibai/tiny-log) | ✨ Structured logging | **0.3.0** |
 | [**tiny-mcp**](https://github.com/hussain-alsaibai/tiny-mcp) | Model Context Protocol | ✅ |
 | [**tiny-circuit**](https://github.com/hussain-alsaibai/tiny-circuit) | Circuit breaker, fault tolerance | ✅ |
 | [**tiny-semaphore**](https://github.com/hussain-alsaibai/tiny-semaphore) | Async concurrency limiter | ✅ |
