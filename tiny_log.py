@@ -44,7 +44,7 @@ from typing import (
 )
 
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -882,3 +882,128 @@ def structured(
         logger = get_logger("event")
     lvl = getattr(logging, level.upper(), logging.INFO)
     logger._log_at(lvl, "", extra={"_event": data})  # type: ignore[attr-defined]
+
+
+# ─── v0.4.0 additions ────────────────────────────────────────────────────────
+
+class MemoryHandler(logging.Handler):
+    """In-memory ring-buffer log handler. Keeps last N records.
+
+    Great for embedding recent context in error reports or for testing.
+    """
+
+    def __init__(self, capacity: int = 500, level: int = logging.NOTSET) -> None:
+        super().__init__(level)
+        self._capacity = capacity
+        self._records: list[logging.LogRecord] = []
+        self._lock = threading.Lock()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        with self._lock:
+            self._records.append(record)
+            if len(self._records) > self._capacity:
+                self._records.pop(0)
+
+    def records(self, level: int | None = None) -> list[logging.LogRecord]:
+        """Return all buffered records, optionally filtered by level."""
+        with self._lock:
+            if level is None:
+                return list(self._records)
+            return [r for r in self._records if r.levelno >= level]
+
+    def dump(self, formatter: str = "%(levelname)s %(message)s") -> str:
+        """Return all records as a formatted string."""
+        out = []
+        for r in self.records():
+            # LogRecord.message is lazily computed; use getMessage() to
+            # ensure %(message)s and other fields are populated reliably.
+            d = {"message": r.getMessage(), **r.__dict__}
+            out.append(formatter % d)
+        return "\n".join(out)
+
+    def last(self, n: int = 10, level: int | None = None) -> list[logging.LogRecord]:
+        """Return the last n records."""
+        recs = self.records(level)
+        return recs[-n:]
+
+
+import threading
+
+
+class RateLimitHandler(logging.Handler):
+    """Per-level rate-limiting handler. Fires at most N events per window seconds.
+
+    Prevents log flooding from tight loops while ensuring every level
+    gets through at least N events per window.
+    """
+
+    def __init__(
+        self,
+        limit_per_window: int = 10,
+        window_sec: float = 60.0,
+        level: int = logging.NOTSET,
+    ) -> None:
+        super().__init__(level)
+        self._limit = limit_per_window
+        self._window = window_sec
+        self._counts: dict[int, list[float]] = {}
+        self._lock = threading.Lock()
+        self._dropped = 0
+        self._total = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        lvl = record.levelno
+        now = time.monotonic()
+
+        with self._lock:
+            self._total += 1
+            if lvl not in self._counts:
+                self._counts[lvl] = []
+
+            # Evict old timestamps
+            cutoff = now - self._window
+            self._counts[lvl] = [t for t in self._counts[lvl] if t > cutoff]
+
+            if len(self._counts[lvl]) < self._limit:
+                self._counts[lvl].append(now)
+                super().emit(record)
+            else:
+                self._dropped += 1
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "total": self._total,
+                "dropped": self._dropped,
+                "pass_rate": round(
+                    (self._total - self._dropped) / max(self._total, 1) * 100, 2
+                ),
+            }
+
+
+class MultiHandler(logging.Handler):
+    """Fan-out handler — emits to multiple sub-handlers."""
+
+    def __init__(self, *handlers: logging.Handler) -> None:
+        super().__init__()
+        self._handlers = list(handlers)
+
+    def add(self, handler: logging.Handler) -> "MultiHandler":
+        self._handlers.append(handler)
+        return self
+
+    def emit(self, record: logging.LogRecord) -> None:
+        for h in self._handlers:
+            try:
+                h.emit(record)
+            except Exception:
+                self.handleError(record)
+
+    def flush(self) -> None:
+        for h in self._handlers:
+            h.flush()
+
+    def close(self) -> None:
+        for h in self._handlers:
+            h.close()
+        super().close()

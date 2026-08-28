@@ -5,7 +5,7 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](tiny_log.py)
-[![Version](https://img.shields.io/badge/version-0.3.0-blue)](https://github.com/hussain-alsaibai/tiny-log)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue)](https://github.com/hussain-alsaibai/tiny-log)
 [![Part of the tiny-* ecosystem](https://img.shields.io/badge/tiny--*-ecosystem-purple.svg)](#ecosystem)
 
 `tiny-log` is a single-file structured logger. JSON or pretty-printed text, with `LogContext` for correlation IDs, bound loggers, file rotation, `log_call` / `log_call_async` timing helpers. Built on Python's stdlib `logging` — no `structlog`, no `loguru`, no `python-json-logger`.
@@ -257,6 +257,9 @@ python -m pytest test_tiny_log.py -v
 | `snapshot()` | Current context dict |
 | `attach(logger, op, log_args, log_result, max_arg_len)` | Decorator: log entry/exit/args/result |
 | `attach_async(...)` | Async version of `attach` |
+| **MemoryHandler** | Ring-buffer in-memory log for testing / error context |
+| **RateLimitHandler** | Per-level rate limiting — N events per window |
+| **MultiHandler** | Fan-out to multiple sub-handlers |
 
 ### Logging methods
 
