@@ -1,0 +1,91 @@
+# tiny-log
+
+> Zero-dependency structured logging for Python. JSON, sampling, async, decorators. Built for humans and AI agents.
+
+- Version: 0.4.0
+- License: MIT
+- Repository: https://github.com/hussain-alsaibai/tiny-log
+- Language: Python (3.8+)
+- Runtime dependencies: 0
+- Install: `pip install tiny-log` (or copy `tiny_log.py`)
+- Docs: README.md, `pyproject.toml`, `benchmark.py`
+
+## What this library does
+
+Provides structured logging with JSON output, multiple handlers (console, file, memory,
+syslog-style), sampling (probabilistic or rate-based), async-safe writers, decorators
+for automatic context binding (who/what/why), and field formatters for redaction and
+PII stripping. Handles 30K logs/sec on commodity hardware.
+
+## When to use it
+
+- You need structured JSON logs without `python-json-logger` (~30KB) or `structlog` (~200KB).
+- You want zero transitive dependencies.
+- You want sampling to cut log volume without losing signal.
+- You want `@attach(user_id=..., request_id=...)` decorators.
+- You want PII redaction at log-time, not after-the-fact.
+
+## When NOT to use it
+
+- You need log shipping to remote endpoints (use `python-logging` shippers).
+- You need log rotation by size with date-based filenames (use `concurrent-log-handler`).
+- You need OpenTelemetry native integration (use `opentelemetry-sdk` directly).
+
+## Public API
+
+- `tiny_log.get_logger(name=...)` — main entry
+- `logger.set_level(level)` — DEBUG / INFO / WARN / ERROR
+- `logger.bind(**fields)` — context-bound logger
+- `logger.sample(rate=0.1)` — probabilistic sampling
+- `logger.handler(handler)` — add console/json/memory/file handler
+- `@attach(user_id=..., request_id=...)` — decorator for context
+- `MemoryHandler(capacity=10000)` — in-memory ring buffer
+- `JsonHandler(stream=sys.stdout, redact_keys=("password",))` — JSON output
+
+## Code example
+
+```python
+import tiny_log as tl
+
+logger = tl.get_logger("agent")
+
+@tl.attach(request_id=lambda req: req.headers.get("X-Request-ID"))
+def handle(req):
+    logger.info("request.received", path=req.path)
+    # ... do work ...
+    return result
+
+# JSON to stdout with PII redaction
+logger.handler(tl.JsonHandler(redact_keys=("password", "api_key", "ssn")))
+
+# Sampling: only log 10% of successful operations
+ok_logger = logger.sample(rate=0.1)
+ok_logger.info("operation.succeeded", duration_ms=42)
+```
+
+## Integration with the tiny-* ecosystem
+
+- `tiny-cost-tracker` writes cost events via `tiny-log` JSON handler.
+- `tiny-budget` reads log totals to attribute spend.
+- `tiny-config` provides log level via `cfg["log"]["level"]`.
+
+## Compatibility
+
+- Python 3.8 – 3.13 confirmed.
+- No C extensions.
+- Async-safe via asyncio locks; thread-safe via threading locks.
+
+## Common pitfalls
+
+1. `bind()` returns a new logger; the old is unchanged.
+2. Sampling decisions are per-call, not per-message-id.
+3. JSON handler emits valid JSON per line — pipe to `jq` for queries.
+4. `@attach` field names with dots are accessed as nested dicts in JSON output.
+
+## Changelog
+
+- 0.4.0 — MemoryHandler uses getMessage(), async logging, sampling, attach decorator
+- 0.3.0 — JSON handler, field formatters
+- 0.2.0 — handlers: console, file, syslog
+- 0.1.0 — initial release
+
