@@ -44,7 +44,11 @@ from typing import (
 )
 
 
-__version__ = "0.4.0"
+__version__ = "0.5.1"
+
+# v0.5.0: optional secret redaction bridge via tiny_secret_mask.
+# Importing tiny_secret_mask is optional and lazy — the core logger
+# stays at zero dependencies.
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -355,6 +359,8 @@ def configure(
     stream: TextIO | None = None,
     capture_warnings: bool = True,
     force_json: bool = False,
+    redact: bool = False,
+    redact_keys: list | None = None,
 ) -> logging.Logger:
     """Configure the root logger. Safe to call multiple times.
 
@@ -391,6 +397,21 @@ def configure(
         json = not (sys.stderr.isatty() if stream is None else False)
     handler.setFormatter(JsonFormatter() if json else TextFormatter(color=color and json is False))
     root.addHandler(handler)
+
+    # v0.5.0: optional redaction bridge.
+    if redact:
+        try:
+            from tiny_log_v050 import (
+                RedactFilter,
+                install_json_redact_bridge,
+                _load_mask as _v050_load_mask,
+            )
+            _load_mask_result = _v050_load_mask()
+            if _load_mask_result is not None:
+                handler.addFilter(RedactFilter())
+                install_json_redact_bridge()
+        except ImportError:  # pragma: no cover - tiny_secret_mask missing
+            pass
 
     if capture_warnings:
         logging.captureWarnings(True)
