@@ -50,7 +50,11 @@ def _capture_log(level: str = "DEBUG", json_mode: bool = True) -> tuple[logging.
 
 class TestVersion(unittest.TestCase):
     def test_version_is_0_3_0(self) -> None:
-        self.assertEqual(tiny_log.__version__, "0.3.0")
+        # Contract, not a pin: this suite predates v0.4/v0.5 work.
+        self.assertGreaterEqual(
+            tuple(int(x) for x in tiny_log.__version__.split(".")),
+            (0, 3, 0),
+        )
 
 
 class TestSnapshot(unittest.TestCase):
