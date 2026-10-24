@@ -14,4 +14,4 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install pytest
-      - run: python -m pytest test_tiny_log.py -v
+      - run: python -m pytest test_tiny_log.py test_tiny_log_v030.py test_version_consistency.py tests/test_tiny_log_v050.py -v
