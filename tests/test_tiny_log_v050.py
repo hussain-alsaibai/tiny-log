@@ -35,7 +35,10 @@ except ImportError:
 class TestVersion(unittest.TestCase):
     def test_tiny_log_version(self) -> None:
         from tiny_log import __version__
-        self.assertEqual(__version__, "0.5.1")
+        # Assert the contract, not a literal: a hard pin breaks on
+        # every version bump. The pyproject match is checked in
+        # test_version_consistency.py.
+        self.assertRegex(__version__, r"^\d+\.\d+\.\d+$")
 
 
 @unittest.skipUnless(_HAS_TSM, "tiny-secret-mask not installed")
