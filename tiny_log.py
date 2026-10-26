@@ -27,6 +27,7 @@ import random
 import sys
 import time
 import uuid
+import contextvars as _contextvars
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import (
@@ -44,7 +45,7 @@ from typing import (
 )
 
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 
 # v0.5.0: optional secret redaction bridge via tiny_secret_mask.
 # Importing tiny_secret_mask is optional and lazy — the core logger
@@ -694,14 +695,39 @@ class SamplingHandler(logging.Handler):
 # ---------- Async logging ----------
 
 
+def _run_in_thread(fn, /, *args, **kwargs):
+    """Run ``fn(*args, **kwargs)`` on a worker thread.
+
+    ``asyncio.to_thread`` only exists on Python 3.9+, but this package
+    supports Python 3.8. On 3.8 we fall back to the equivalent
+    ``loop.run_in_executor(None, ...)`` call, which is exactly what
+    ``asyncio.to_thread`` does internally.
+    """
+    to_thread = getattr(asyncio, "to_thread", None)
+    if to_thread is not None:
+        return to_thread(fn, *args, **kwargs)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - no running loop
+        loop = asyncio.get_event_loop()
+    ctx = _contextvars.copy_context()
+
+    def _call():
+        return ctx.run(functools.partial(fn, *args, **kwargs))
+
+    return loop.run_in_executor(None, _call)
+
+
 class TinyLogAsync:
     """Async wrapper around a TinyLogger.
 
     Each method schedules the underlying sync call on a worker thread via
-    ``asyncio.to_thread`` so the I/O cost of formatting/serialising never
-    blocks the event loop. The returned coroutine is fire-and-forget from
-    the caller's perspective; awaiting it ensures the log line is fully
-    flushed before continuing.
+    ``asyncio.to_thread`` (or a ``run_in_executor`` equivalent on Python
+    3.8) so the I/O cost of formatting/serialising never blocks the event
+    loop. The returned coroutine is fire-and-forget from the caller's
+    perspective; awaiting it ensures the log line is fully flushed before
+    continuing.
 
     Usage:
         log = get_logger("svc")
@@ -715,19 +741,19 @@ class TinyLogAsync:
         self._logger = logger
 
     async def adebug(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        await asyncio.to_thread(self._logger.debug, msg, extra=extra, **kwargs)
+        await _run_in_thread(self._logger.debug, msg, extra=extra, **kwargs)
 
     async def ainfo(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        await asyncio.to_thread(self._logger.info, msg, extra=extra, **kwargs)
+        await _run_in_thread(self._logger.info, msg, extra=extra, **kwargs)
 
     async def awarning(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        await asyncio.to_thread(self._logger.warning, msg, extra=extra, **kwargs)
+        await _run_in_thread(self._logger.warning, msg, extra=extra, **kwargs)
 
     async def aerror(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        await asyncio.to_thread(self._logger.error, msg, extra=extra, **kwargs)
+        await _run_in_thread(self._logger.error, msg, extra=extra, **kwargs)
 
     async def acritical(self, msg: str, *, extra: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        await asyncio.to_thread(self._logger.critical, msg, extra=extra, **kwargs)
+        await _run_in_thread(self._logger.critical, msg, extra=extra, **kwargs)
 
 
 # ---------- Attach decorator ----------

@@ -3,6 +3,26 @@
 All notable changes to tiny-log are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2] — 2026-10-26
+
+### Fixed
+- `TinyLogAsync` no longer crashes on Python 3.8. The async wrapper called
+  `asyncio.to_thread`, which was only added in **Python 3.9**, while the
+  package declares `requires-python = ">=3.8"` and CI runs on 3.8. Every
+  `TinyLogAsync` call raised `AttributeError: module 'asyncio' has no
+  attribute 'to_thread'`. The new `_run_in_thread()` helper uses
+  `asyncio.to_thread` when available and falls back to the equivalent
+  `loop.run_in_executor(None, ...)` call on 3.8.
+
+### Added
+- `tests/test_tiny_log_v052_py38.py` — regression coverage that hides
+  `asyncio.to_thread` to simulate a 3.8 interpreter. Verified to fail
+  against the pre-fix code (3 failed) and pass after (4 passed).
+
+### Changed
+- CI now runs the new test file.
+- Bumped `__version__` and `pyproject.toml` to `0.5.2`.
+
 ## [0.5.1] — 2026-10-12
 
 ### Fixed

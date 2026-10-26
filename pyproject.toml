@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tiny-log"
-version = "0.5.1"
+version = "0.5.2"
 description = "Zero-dependency structured logging. Like structlog/loguru in one file. 32K logs/s. v0.5.0 adds optional secret redaction via tiny_secret_mask."
 readme = "README.md"
 license = {text = "MIT"}
