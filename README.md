@@ -43,9 +43,14 @@ log.info("login", extra={"user": "alice", "password": "hunter2"})
 Install the optional bridge:
 
 ```bash
-pip install tiny-log tiny-secret-mask
-# or
-pip install tiny-log[redact]
+# From GitHub (recommended -- not yet on PyPI)
+pip install git+https://github.com/hussain-alsaibai/tiny-log.git
+```
+
+The redaction bridge is optional and lives in a separate package:
+
+```bash
+pip install git+https://github.com/hussain-alsaibai/tiny-secret-mask.git
 ```
 
 ## 🧪 Tests
