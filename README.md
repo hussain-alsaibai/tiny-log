@@ -1,4 +1,5 @@
 # tiny-log — Zero-Dependency Structured Logging
+[![CI](https://github.com/hussain-alsaibai/tiny-log/actions/workflows/ci.yml/badge.svg)](https://github.com/hussain-alsaibai/tiny-log/actions/workflows/ci.yml)
 
 > **Like structlog/loguru, but in one file. Zero dependencies.**
 
