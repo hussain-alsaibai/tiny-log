@@ -7,7 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](tiny_log.py)
 [![Part of the tiny-* ecosystem](https://img.shields.io/badge/tiny--*-ecosystem-purple.svg)](#ecosystem)
-[![Version](https://img.shields.io/badge/version-0.5.0-blue)](https://github.com/hussain-alsaibai/tiny-log)
+[![Version](https://img.shields.io/badge/version-0.5.2-blue)](https://github.com/hussain-alsaibai/tiny-log)
+[![CI](https://github.com/hussain-alsaibai/tiny-log/actions/workflows/ci.yml/badge.svg)](https://github.com/hussain-alsaibai/tiny-log/actions/workflows/ci.yml)
 
 Single-file structured logger. JSON or pretty-printed text, with `LogContext` for
 correlation IDs, bound loggers, file rotation, `log_call` / `log_call_async` timing
@@ -58,9 +59,17 @@ pip install git+https://github.com/hussain-alsaibai/tiny-secret-mask.git
 
 ```bash
 cd tiny-log
-python3 -m unittest test_tiny_log -v          # core
-python3 -m unittest test_tiny_log_v030 -v    # async + sampling
-python3 -m unittest test_tiny_log_v050 -v    # redaction bridge
+python3 -m pytest -q
 ```
 
-Suite is 38 tests (20 + 0 + 18 across the three files), all passing on stdlib only.
+78 tests, stdlib only:
+
+| File | Tests | Covers |
+|------|-------|--------|
+| `test_tiny_log.py` | 17 | core logger, formatters, `LogContext`, `bind` |
+| `test_tiny_log_v030.py` | 39 | async logging, sampling, rotation |
+| `tests/test_tiny_log_v050.py` | 16 | secret-redaction bridge |
+| `tests/test_tiny_log_v052_py38.py` | 4 | Python 3.8 compatibility (`asyncio.to_thread` is 3.9+) |
+| `test_version_consistency.py` | 2 | `pyproject.toml` version matches `tiny_log.__version__` |
+
+CI runs the suite on Python 3.8 through 3.12.
