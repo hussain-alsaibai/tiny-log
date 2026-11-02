@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 import uuid
@@ -45,7 +46,7 @@ from typing import (
 )
 
 
-__version__ = "0.5.2"
+__version__ = "0.6.0"
 
 # v0.5.0: optional secret redaction bridge via tiny_secret_mask.
 # Importing tiny_secret_mask is optional and lazy — the core logger
@@ -104,6 +105,172 @@ def new_request_id(length: int = 16) -> str:
 def new_trace_id() -> str:
     """Generate a trace ID (24 hex chars, compatible with OpenTelemetry)."""
     return uuid.uuid4().hex[:24]
+
+
+# --- W3C trace context (traceparent / tracestate) ---------------------------
+# W3C Trace Context requires a 32-hex-char trace ID and a 16-hex-char span ID.
+# `new_trace_id()` above is 24 chars for OpenTelemetry-style display, so the
+# traceparent helpers mint their own 32-char IDs.
+
+_TRACEPARENT_RE = re.compile(
+    r"^(?P<ver>00)-(?P<trace_id>[0-9a-f]{32})-(?P<span_id>[0-9a-f]{16})-(?P<flags>[0-9a-f]{2})$"
+)
+_TRACESTATE_MAX_LEN = 512
+
+
+def new_span_id() -> str:
+    """Generate a span ID (16 hex chars, W3C / OpenTelemetry-compatible)."""
+    return uuid.uuid4().hex[:16]
+
+
+def new_w3c_trace_id() -> str:
+    """Generate a trace ID in the 32-hex-char form W3C Trace Context requires."""
+    return uuid.uuid4().hex
+
+
+def parse_traceparent(value: Optional[str]) -> Optional[dict[str, str]]:
+    """Parse a W3C `traceparent` header.
+
+    Returns ``{"version", "trace_id", "span_id", "flags"}`` or ``None`` when
+    the value is missing, malformed, all-zero, or unsupported. Per the W3C
+    spec an all-zero trace ID or span ID is invalid, so it is rejected here.
+    """
+    if not value:
+        return None
+    m = _TRACEPARENT_RE.match(value.strip())
+    if not m:
+        return None
+    trace_id = m.group("trace_id")
+    span_id = m.group("span_id")
+    if trace_id == "0" * 32 or span_id == "0" * 16:
+        return None
+    return {
+        "version": m.group("ver"),
+        "trace_id": trace_id,
+        "span_id": span_id,
+        "flags": m.group("flags"),
+    }
+
+
+def inject_traceparent(
+    *,
+    trace_id: Optional[str] = None,
+    span_id: Optional[str] = None,
+    flags: str = "01",
+    tracestate: Optional[str] = None,
+) -> dict[str, str]:
+    """Build a W3C `traceparent` header (and optional `tracestate`).
+
+    `trace_id` and `span_id` are explicit so a caller can continue an
+    existing trace instead of starting a new one. When `trace_id` is given
+    it must be the 32-hex-char W3C form; the 24-char display form is not
+    valid in a traceparent header.
+    """
+    tid = trace_id or new_w3c_trace_id()
+    sp = span_id or new_span_id()
+    headers = {"traceparent": "00-%s-%s-%s" % (tid, sp, flags or "01")}
+    if tracestate and 0 < len(tracestate) <= _TRACESTATE_MAX_LEN and "\n" not in tracestate:
+        headers["tracestate"] = tracestate
+    return headers
+
+
+class TraceContext:
+    """Bind W3C trace context to the current log scope.
+
+    Bound values are auto-attached to every log record emitted inside the
+    context, alongside any `LogContext` values. Use `as_headers()` on outgoing
+    HTTP requests so the downstream service stays in the same trace.
+
+    Example::
+
+        import requests
+        with TraceContext() as tc:
+            requests.get("https://api.example.com/v1/users", headers=tc.as_headers())
+
+        # Or continue an incoming trace:
+        with TraceContext.from_headers(incoming) as tc:
+            do_work()
+    """
+
+    _TRACE_KEYS = ("trace_id", "span_id", "parent_span_id", "flags", "tracestate")
+
+    def __init__(
+        self,
+        *,
+        trace_id: Optional[str] = None,
+        span_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        flags: str = "01",
+        tracestate: Optional[str] = None,
+    ) -> None:
+        if trace_id is None:
+            trace_id = new_w3c_trace_id()
+        if span_id is None:
+            span_id = new_span_id()
+        self.trace_id = trace_id
+        self.span_id = span_id
+        self.parent_span_id = parent_span_id
+        self.flags = flags
+        self.tracestate = tracestate
+        self._token: Any = None
+
+    @classmethod
+    def from_headers(
+        cls,
+        headers: Optional[Mapping[str, str]] = None,
+        *,
+        traceparent: Optional[str] = None,
+        tracestate: Optional[str] = None,
+    ) -> "TraceContext":
+        """Continue an incoming trace; otherwise mint a new one."""
+        if traceparent is None and headers is not None:
+            for key in ("traceparent", "Traceparent", "TRACEPARENT"):
+                if key in headers:
+                    traceparent = headers[key]
+                    break
+            if tracestate is None:
+                for key in ("tracestate", "Tracestate", "TRACESTATE"):
+                    if key in headers:
+                        tracestate = headers[key]
+                        break
+        parsed = parse_traceparent(traceparent)
+        if parsed is None:
+            return cls()
+        return cls(
+            trace_id=parsed["trace_id"],
+            span_id=new_span_id(),
+            parent_span_id=parsed["span_id"],
+            flags=parsed["flags"],
+            tracestate=tracestate,
+        )
+
+    def as_headers(self) -> dict[str, str]:
+        """Headers that continue THIS trace.
+
+        The trace ID is the one this context is already using, so the caller's
+        span becomes the parent of the outgoing request rather than starting a
+        separate trace.
+        """
+        return inject_traceparent(
+            trace_id=self.trace_id,
+            span_id=self.span_id,
+            flags=self.flags,
+            tracestate=self.tracestate,
+        )
+
+    def __enter__(self) -> "TraceContext":
+        merged = {**_context.get()}
+        for key, value in zip(
+            self._TRACE_KEYS,
+            (self.trace_id, self.span_id, self.parent_span_id, self.flags, self.tracestate),
+        ):
+            if value is not None:
+                merged[key] = value
+        self._token = _context.set(merged)
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        _context.reset(self._token)
 
 
 def snapshot() -> dict[str, Any]:
@@ -890,10 +1057,15 @@ __all__ = [
     "configure",
     "get_logger",
     "LogContext",
+    "TraceContext",
     "current_context",
     "snapshot",
     "new_request_id",
     "new_trace_id",
+    "new_span_id",
+    "new_w3c_trace_id",
+    "parse_traceparent",
+    "inject_traceparent",
     "color",
     "json_field",
     "bytes_human",

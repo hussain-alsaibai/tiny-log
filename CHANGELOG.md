@@ -3,6 +3,33 @@
 All notable changes to tiny-log are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] — 2026-11-02
+
+### Added
+- **W3C trace context.** `TraceContext` binds `trace_id`, `span_id`,
+  `parent_span_id`, `flags` and `tracestate` to the current log scope, so
+  every record emitted inside the context carries them. `as_headers()`
+  returns the `traceparent` (and optional `tracestate`) for an outgoing
+  request. `TraceContext.from_headers()` continues an incoming trace.
+- **`parse_traceparent()` / `inject_traceparent()`** as standalone helpers,
+  plus `new_span_id()` (16 hex) and `new_w3c_trace_id()` (32 hex). The
+  existing `new_trace_id()` keeps its 24-hex OpenTelemetry display form.
+- **`tests/test_tiny_log_v060_trace.py`** — 20 tests covering parsing,
+  injection, trace continuity and scope binding. Verified to fail (3) when
+  the trace-continuity guard is removed.
+
+### Fixed
+- **Trace continuity in `as_headers()`.** The implementation this was
+  ported from built the outgoing header by calling `inject_traceparent()`
+  without a `trace_id`, which minted a *fresh* trace id. Every outgoing
+  request therefore landed in a different trace from the log records it
+  was issued alongside — the opposite of what the class promises. The
+  header now carries the context's own trace id, so the caller's span
+  becomes the parent of the downstream request.
+
+### Changed
+- CI now runs `tests/test_tiny_log_v060_trace.py` across Python 3.8-3.12.
+
 ## [0.5.2] — 2026-10-26
 
 ### Fixed

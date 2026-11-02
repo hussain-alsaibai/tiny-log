@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](tiny_log.py)
 [![Part of the tiny-* ecosystem](https://img.shields.io/badge/tiny--*-ecosystem-purple.svg)](#ecosystem)
-[![Version](https://img.shields.io/badge/version-0.5.2-blue)](https://github.com/hussain-alsaibai/tiny-log)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/hussain-alsaibai/tiny-log)
 [![CI](https://github.com/hussain-alsaibai/tiny-log/actions/workflows/ci.yml/badge.svg)](https://github.com/hussain-alsaibai/tiny-log/actions/workflows/ci.yml)
 
 Single-file structured logger. JSON or pretty-printed text, with `LogContext` for
@@ -29,6 +29,9 @@ out of every log line before it hits a sink or an LLM context window.
 - **🌈 `ColoredString`** — ANSI-coloured log fields, preserved in JSON output
 - **🔒 `configure(redact=True)` (v0.5.0)** — auto-redact credentials, JWTs, and PII
   via the [tiny-secret-mask](https://github.com/hussain-alsaibai/tiny-secret-mask) bridge
+- **🧵 W3C trace context (v0.6.0)** — `TraceContext` binds `trace_id` / `span_id` /
+  `flags` / `tracestate` to the log scope, and `as_headers()` returns the
+  `traceparent` that continues the *same* trace downstream
 
 ## 🚀 Quick start
 
@@ -55,6 +58,26 @@ The redaction bridge is optional and lives in a separate package:
 pip install git+https://github.com/hussain-alsaibai/tiny-secret-mask.git
 ```
 
+## 🧵 W3C trace context (v0.6.0)
+
+```python
+from tiny_log import TraceContext, get_logger
+
+log = get_logger("api")
+
+with TraceContext() as tc:
+    log.info("handling request")   # carries trace_id + span_id
+    headers = tc.as_headers()      # traceparent for the downstream call
+    # headers["traceparent"] -> "00-<this trace>-<this span>-01"
+
+# Continue a trace that arrived from upstream:
+with TraceContext.from_headers(incoming_headers) as tc:
+    log.info("continuing")
+```
+
+`as_headers()` carries the context's own trace id, so the downstream service
+stays in the same trace instead of starting a new one.
+
 ## 🧪 Tests
 
 ```bash
@@ -62,7 +85,7 @@ cd tiny-log
 python3 -m pytest -q
 ```
 
-78 tests, stdlib only:
+98 tests, stdlib only:
 
 | File | Tests | Covers |
 |------|-------|--------|
@@ -70,6 +93,7 @@ python3 -m pytest -q
 | `test_tiny_log_v030.py` | 39 | async logging, sampling, rotation |
 | `tests/test_tiny_log_v050.py` | 16 | secret-redaction bridge |
 | `tests/test_tiny_log_v052_py38.py` | 4 | Python 3.8 compatibility (`asyncio.to_thread` is 3.9+) |
+| `tests/test_tiny_log_v060_trace.py` | 20 | W3C trace context, `traceparent` parsing and injection |
 | `test_version_consistency.py` | 2 | `pyproject.toml` version matches `tiny_log.__version__` |
 
 CI runs the suite on Python 3.8 through 3.12.
