@@ -32,4 +32,4 @@ Homepage = "https://github.com/hussain-alsaibai/tiny-log"
 Repository = "https://github.com/hussain-alsaibai/tiny-log"
 
 [tool.setuptools]
-py-modules = ["tiny_log", "tiny_log_v050"]
+py-modules = ["tiny_log", "tiny_log_v050", "otel"]
