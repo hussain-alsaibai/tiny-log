@@ -3,6 +3,22 @@
 All notable changes to tiny-log are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **`TraceContext.child()`** — a nested span in the same trace. Two same-level
+  blocks under one root both reported the root as their caller, so a trace
+  viewer drew them as siblings even when the nesting was real. `child()` keeps
+  the trace id, sampling flags and `tracestate` and mints only the span id;
+  `child(span_id=...)` is explicit for the case where the id is known upstream.
+- 8 tests in `tests/test_tiny_log_v060_trace.py` (`TestChildSpans`). The
+  reparenting test fails when `parent_span_id` is left unset, which is the
+  bug this method exists to make impossible.
+
+### Fixed
+- README test table said 98 tests and 20 in the trace file; the suite is 106
+  and that file holds 28.
+
 ## [0.6.0] — 2026-11-02
 
 ### Added

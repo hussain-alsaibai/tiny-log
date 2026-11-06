@@ -78,6 +78,24 @@ with TraceContext.from_headers(incoming_headers) as tc:
 `as_headers()` carries the context's own trace id, so the downstream service
 stays in the same trace instead of starting a new one.
 
+### Nested spans
+
+Two blocks opened under one root both report the *root* span as their caller,
+so a trace viewer draws them as siblings. When the nesting is real, say so:
+
+```python
+with TraceContext.from_headers(incoming) as root:
+    log.info("request")                 # parent_span_id == <upstream span>
+    with root.child() as db:
+        log.info("query")               # parent_span_id == root.span_id
+        with db.child() as retry:
+            log.info("retry")           # parent_span_id == db.span_id
+```
+
+`child()` keeps the trace id, the sampling flags and the `tracestate`, and
+mints only the span id. Nothing becomes active until the `with` block opens,
+so building a child ahead of time is safe.
+
 ## 🧪 Tests
 
 ```bash
@@ -85,7 +103,7 @@ cd tiny-log
 python3 -m pytest -q
 ```
 
-98 tests, stdlib only:
+106 tests, stdlib only:
 
 | File | Tests | Covers |
 |------|-------|--------|
@@ -93,7 +111,7 @@ python3 -m pytest -q
 | `test_tiny_log_v030.py` | 39 | async logging, sampling, rotation |
 | `tests/test_tiny_log_v050.py` | 16 | secret-redaction bridge |
 | `tests/test_tiny_log_v052_py38.py` | 4 | Python 3.8 compatibility (`asyncio.to_thread` is 3.9+) |
-| `tests/test_tiny_log_v060_trace.py` | 20 | W3C trace context, `traceparent` parsing and injection |
+| `tests/test_tiny_log_v060_trace.py` | 28 | W3C trace context, `traceparent` parsing and injection, nested child spans |
 | `test_version_consistency.py` | 2 | `pyproject.toml` version matches `tiny_log.__version__` |
 
 CI runs the suite on Python 3.8 through 3.12.

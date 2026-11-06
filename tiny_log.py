@@ -258,6 +258,29 @@ class TraceContext:
             tracestate=self.tracestate,
         )
 
+    def child(self, *, span_id: Optional[str] = None) -> "TraceContext":
+        """Return a nested span in the same trace.
+
+        Two same-level blocks under one parent both report the *parent* span as
+        their caller, so a trace viewer sees two siblings rather than a chain.
+        `child()` makes the nesting explicit while keeping the trace id and
+        sampling flags intact::
+
+            with TraceContext.from_headers(incoming) as root:
+                with root.child() as db:
+                    log.info("query")   # parent_span_id == root.span_id
+
+        The result is a plain context; it only becomes the active scope inside
+        its own ``with`` block.
+        """
+        return TraceContext(
+            trace_id=self.trace_id,
+            span_id=span_id or new_span_id(),
+            parent_span_id=self.span_id,
+            flags=self.flags,
+            tracestate=self.tracestate,
+        )
+
     def __enter__(self) -> "TraceContext":
         merged = {**_context.get()}
         for key, value in zip(

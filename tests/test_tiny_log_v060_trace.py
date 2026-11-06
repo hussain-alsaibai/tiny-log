@@ -162,3 +162,60 @@ class TestIdShapes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestChildSpans(unittest.TestCase):
+    """A same-level block reports the root as its parent, which makes siblings
+    indistinguishable from a chain. child() is the fix; these pin it."""
+
+    def test_child_keeps_trace_and_reparents(self):
+        root = TraceContext()
+        child = root.child()
+        self.assertEqual(child.trace_id, root.trace_id)
+        self.assertEqual(child.parent_span_id, root.span_id)
+        self.assertNotEqual(child.span_id, root.span_id)
+
+    def test_child_preserves_sampling_flags(self):
+        root = TraceContext(flags="00")  # not sampled upstream
+        self.assertEqual(root.child().flags, "00")
+
+    def test_child_preserves_tracestate(self):
+        root = TraceContext(tracestate="vendor=1")
+        self.assertEqual(root.child().tracestate, "vendor=1")
+
+    def test_two_children_are_siblings(self):
+        root = TraceContext()
+        a, b = root.child(), root.child()
+        self.assertEqual(a.parent_span_id, b.parent_span_id)
+        self.assertNotEqual(a.span_id, b.span_id)
+
+    def test_grandchild_chains(self):
+        root = TraceContext()
+        leaf = root.child().child()
+        self.assertEqual(leaf.trace_id, root.trace_id)
+        self.assertNotEqual(leaf.parent_span_id, root.span_id)
+
+    def test_child_headers_continue_the_same_trace(self):
+        root = TraceContext()
+        child = root.child()
+        parsed = parse_traceparent(child.as_headers()["traceparent"])
+        self.assertEqual(parsed["trace_id"], root.trace_id)
+        self.assertEqual(parsed["span_id"], child.span_id)
+
+    def test_child_is_not_active_outside_its_block(self):
+        root = TraceContext()
+        child = root.child()
+        with root:
+            inside_parent = tiny_log.current_context()["span_id"]
+            with child:
+                inside_child = tiny_log.current_context()["span_id"]
+            after_child = tiny_log.current_context()["span_id"]
+        self.assertEqual(inside_parent, root.span_id)
+        self.assertEqual(inside_child, child.span_id)
+        self.assertEqual(after_child, root.span_id)
+
+    def test_child_accepts_an_explicit_span_id(self):
+        root = TraceContext()
+        child = root.child(span_id="00f067aa0ba902b7")
+        self.assertEqual(child.span_id, "00f067aa0ba902b7")
+        self.assertEqual(child.as_headers()["traceparent"].split("-")[2], "00f067aa0ba902b7")
