@@ -96,6 +96,41 @@ with TraceContext.from_headers(incoming) as root:
 mints only the span id. Nothing becomes active until the `with` block opens,
 so building a child ahead of time is safe.
 
+## 🧩 Trace context injection into log records (otel)
+
+The v0.6.0 `TraceContext` above carries a trace through your code. This module
+injects `trace_id` and `span_id` into every `LogRecord`, so formatters can
+pick them up with `%(trace_id)s`:
+
+```python
+import logging
+from otel import TraceContextFilter, bind_trace_context, reset_trace_context
+
+handler = logging.StreamHandler()
+handler.addFilter(TraceContextFilter())
+handler.setFormatter(logging.Formatter("%(trace_id)s %(span_id)s %(message)s"))
+
+tokens = bind_trace_context(trace_id="abc123", span_id="def456")
+try:
+    logging.getLogger("api").info("handling request")
+    # -> abc123 def456 handling request
+finally:
+    reset_trace_context(tokens)
+```
+
+The provider is pluggable, so trace context can come from somewhere other
+than `contextvars`:
+
+```python
+class MyProvider:
+    def current(self):
+        return {"trace_id": ..., "span_id": ...}
+
+handler.addFilter(TraceContextFilter(MyProvider()))
+```
+
+Stdlib only - no `opentelemetry` package required.
+
 ## 🧪 Tests
 
 ```bash
