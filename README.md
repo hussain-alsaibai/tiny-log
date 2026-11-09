@@ -58,6 +58,30 @@ The redaction bridge is optional and lives in a separate package:
 pip install git+https://github.com/hussain-alsaibai/tiny-secret-mask.git
 ```
 
+### `redact=True` fails closed (v0.7.0)
+
+Passing `redact=True` is a statement that logs must not contain credentials.
+Before v0.7.0 the bridge import was wrapped in `except ImportError: pass`, so a
+container image that had lost `tiny-secret-mask` in a rebuild returned a
+perfectly working logger that wrote passwords and JWTs in the clear. Nothing
+raised, nothing warned, and the logs looked normal.
+
+Now the call raises:
+
+```python
+>>> configure(redact=True)
+Traceback (most recent call last):
+    ...
+tiny_log.RedactionUnavailable: configure(redact=True) requires the redaction
+bridge from tiny_log_v050, which could not be imported (No module named
+'tiny_secret_mask'). Install 'tiny-secret-mask>=0.4.0', or call
+configure(redact=False) if unredacted logs are what you want.
+```
+
+`configure(redact=False)` is unchanged — omitting redaction is a valid choice,
+you just have to say it. Same rule as `tiny-router` and `tiny-route-redact`:
+a redaction layer that cannot redact must refuse.
+
 ## 🧵 W3C trace context (v0.6.0)
 
 ```python

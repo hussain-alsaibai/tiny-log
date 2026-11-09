@@ -46,7 +46,11 @@ from typing import (
 )
 
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
+
+
+class RedactionUnavailable(RuntimeError):
+    """Raised when configure(redact=True) cannot actually redact."""
 
 # v0.5.0: optional secret redaction bridge via tiny_secret_mask.
 # Importing tiny_secret_mask is optional and lazy — the core logger
@@ -589,20 +593,37 @@ def configure(
     handler.setFormatter(JsonFormatter() if json else TextFormatter(color=color and json is False))
     root.addHandler(handler)
 
-    # v0.5.0: optional redaction bridge.
+    # v0.5.0 redaction bridge. As of 0.7.0 this REFUSES to configure silently:
+    # configure(redact=True) is a statement that logs must be scrubbed, and a
+    # configuration that returns a working logger while writing credentials is
+    # the failure the caller was trying to prevent.
     if redact:
+        bridge = None
         try:
             from tiny_log_v050 import (
                 RedactFilter,
                 install_json_redact_bridge,
                 _load_mask as _v050_load_mask,
             )
-            _load_mask_result = _v050_load_mask()
-            if _load_mask_result is not None:
-                handler.addFilter(RedactFilter())
-                install_json_redact_bridge()
-        except ImportError:  # pragma: no cover - tiny_secret_mask missing
-            pass
+            bridge = (RedactFilter, install_json_redact_bridge, _v050_load_mask)
+        except ImportError as exc:
+            raise RedactionUnavailable(
+                "configure(redact=True) requires the redaction bridge from "
+                "tiny_log_v050, which could not be imported "
+                f"({exc}). Install 'tiny-secret-mask>=0.4.0', or call "
+                "configure(redact=False) if unredacted logs are what you want."
+            ) from exc
+
+        RedactFilter, install_json_redact_bridge, _v050_load_mask = bridge
+        if _v050_load_mask() is None:
+            raise RedactionUnavailable(
+                "configure(redact=True) could not load tiny_secret_mask's "
+                "mask function, so the RedactFilter would pass credentials "
+                "through. Install 'tiny-secret-mask>=0.4.0', or call "
+                "configure(redact=False) if unredacted logs are what you want."
+            )
+        handler.addFilter(RedactFilter())
+        install_json_redact_bridge()
 
     if capture_warnings:
         logging.captureWarnings(True)

@@ -3,6 +3,21 @@
 All notable changes to tiny-log are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-11-09
+
+### Changed (breaking)
+- **`configure(redact=True)` raises `RedactionUnavailable` when the redaction
+  bridge cannot be loaded**, instead of catching `ImportError` and returning a
+  working logger that writes credentials in the clear. Callers who want logs
+  without redaction call `configure(redact=False)` explicitly.
+- Also raises when `tiny_secret_mask` imports but exposes no mask function —
+  previously the filter was installed anyway and passed everything through.
+
+### Added
+- `RedactionUnavailable` exception, whose message names both the install
+  command and the `redact=False` opt-out.
+- `TestRedactFailsClosed` (2 tests); the first fails against 0.6.0.
+
 ## [Unreleased]
 
 ### Added

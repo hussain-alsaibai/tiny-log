@@ -219,3 +219,40 @@ class TestChildSpans(unittest.TestCase):
         child = root.child(span_id="00f067aa0ba902b7")
         self.assertEqual(child.span_id, "00f067aa0ba902b7")
         self.assertEqual(child.as_headers()["traceparent"].split("-")[2], "00f067aa0ba902b7")
+
+
+# ---- configure(redact=True) must not silently log credentials -------------
+#
+# AGENTS.md 2026-10-26: a redaction function that cannot do its job must raise,
+# with an explicitly named opt-out. Before 0.7.0 configure(redact=True) caught
+# ImportError from the redaction bridge and returned a fully working logger that
+# wrote credentials in the clear.
+
+
+class TestRedactFailsClosed(unittest.TestCase):
+    def _configure_with_broken_bridge(self):
+        import builtins
+        real = builtins.__import__
+
+        def fake(name, *a, **k):
+            if name == "tiny_log_v050":
+                raise ImportError("No module named 'tiny_secret_mask'")
+            return real(name, *a, **k)
+
+        builtins.__import__ = fake
+        try:
+            import tiny_log
+            tiny_log.configure(redact=True)
+        finally:
+            builtins.__import__ = real
+
+    def test_redact_true_raises_when_bridge_missing(self):
+        import tiny_log
+        with self.assertRaises(tiny_log.RedactionUnavailable) as ctx:
+            self._configure_with_broken_bridge()
+        msg = str(ctx.exception).lower()
+        self.assertIn("redact=false", msg, "the error must name the opt-out")
+
+    def test_redact_false_still_configures(self):
+        import tiny_log
+        tiny_log.configure(redact=False)  # must not raise
