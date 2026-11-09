@@ -46,7 +46,7 @@ from typing import (
 )
 
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 
 class RedactionUnavailable(RuntimeError):
@@ -492,6 +492,18 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=self._ensure_ascii, sort_keys=self._sort_keys, default=str)
 
 
+def _format_extra_value(value: Any) -> str:
+    """Render an extra field for the text formatter.
+
+    Strings stay unquoted (``user=alice``) because quoting is noise in a
+    terminal; everything else gets ``repr`` so ``None`` and ``"None"`` are
+    distinguishable in a log line.
+    """
+    if isinstance(value, str):
+        return value
+    return repr(value)
+
+
 class TextFormatter(logging.Formatter):
     """Colorized, pretty-printed text format for humans."""
 
@@ -504,9 +516,17 @@ class TextFormatter(logging.Formatter):
     }
     RESET = "\x1b[0m"
 
-    def __init__(self, *, color: bool = True) -> None:
+    # v0.8.0: fields rendered inline in the text line. Everything else the
+    # caller passed via extra= used to be dropped here while the JSON
+    # formatter emitted it - so the same log call had different fields
+    # depending on the format, and `log.info("x", extra={"latency_ms": 42})`
+    # lost latency_ms on a developer's terminal.
+    INLINE_KEYS = ("request_id", "user_id", "trace_id")
+
+    def __init__(self, *, color: bool = True, extras: bool = True) -> None:
         super().__init__()
         self._color = color
+        self._extras = extras
 
     def format(self, record: logging.LogRecord) -> str:
         ts = datetime.fromtimestamp(record.created, tz=timezone.utc).strftime("%H:%M:%S.%f")[:-3]
@@ -520,19 +540,21 @@ class TextFormatter(logging.Formatter):
         if ctx:
             line += f"  ctx={ctx}"
         # Include extras
-        for key, value in record.__dict__.items():
-            if key in self.DEFAULT_KEYS or key.startswith("_") or key in {"ctx"}:
-                continue
-            if key in {"request_id", "user_id", "trace_id"}:
-                line += f"  {key}={value}"
-                continue
-            if isinstance(value, ColoredString):
-                code = _ANSI_COLORS.get(value._tiny_color, "")  # type: ignore[attr-defined]
-                if self._color and is_tty and code:
-                    line += f"  {key}={code}{value}{self.RESET}"
-                else:
+        if self._extras:
+            for key, value in record.__dict__.items():
+                if key in self.DEFAULT_KEYS or key.startswith("_") or key in {"ctx"}:
+                    continue
+                if key in self.INLINE_KEYS:
                     line += f"  {key}={value}"
-                continue
+                    continue
+                if isinstance(value, ColoredString):
+                    code = _ANSI_COLORS.get(value._tiny_color, "")  # type: ignore[attr-defined]
+                    if self._color and is_tty and code:
+                        line += f"  {key}={code}{value}{self.RESET}"
+                    else:
+                        line += f"  {key}={value}"
+                    continue
+                line += f"  {key}={_format_extra_value(value)}"
         if record.exc_info:
             line += "\n" + self.formatException(record.exc_info)
         return line

@@ -3,6 +3,33 @@
 All notable changes to tiny-log are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] - 2026-11-09
+
+### Fixed
+
+- **`TextFormatter` silently dropped every `extra=` field except three
+  hardcoded ones.** The JSON formatter emitted all of them; the text
+  formatter rendered `request_id`, `user_id` and `trace_id` and discarded the
+  rest. So `log.info("request", extra={"latency_ms": 42})` carried
+  `latency_ms` in production and lost it on a developer's terminal - which is
+  where you were looking while debugging. Nothing raised; the field was just
+  absent from the line.
+
+  All extras are now rendered. Strings stay unquoted (`user=alice`),
+  everything else uses `repr` so `cache_hit=None` and `cache_hit="None"` are
+  distinguishable. Stdlib record attributes and private (`_`-prefixed) keys
+  are still excluded, and the old behaviour is available as
+  `TextFormatter(extras=False)`.
+
+- `configure(json=False)` produces a logger whose visible fields are now the
+  same set as `configure(json=True)`, which is what "same log call, two
+  formats" has to mean.
+
+### Added
+
+- 11 regression tests in `test_v080_text_extras.py`; **7 fail against 0.7.0**
+  (the 4 that pass on both are the control paths).
+
 ## [0.7.0] - 2026-11-09
 
 ### Changed (breaking)

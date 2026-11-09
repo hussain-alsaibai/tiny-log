@@ -45,6 +45,11 @@ log.info("login", extra={"user": "alice", "password": "hunter2"})
 # -> "login  user=alice  password=[REDACTED:password]"
 ```
 
+`extra=` fields render in **both** formats — text and JSON carry the same
+fields for the same call. Strings stay unquoted in text mode, everything else
+is `repr`'d so `None` and `"None"` are distinguishable. Turn it off with
+`TextFormatter(extras=False)`.
+
 Install the optional bridge:
 
 ```bash
