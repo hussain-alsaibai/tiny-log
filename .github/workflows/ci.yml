@@ -14,4 +14,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install pytest
-      - run: python -m pytest test_tiny_log.py test_tiny_log_v030.py test_version_consistency.py tests/test_tiny_log_v050.py tests/test_tiny_log_v052_py38.py tests/test_tiny_log_v060_trace.py test_otel.py -v
+      # Collect the whole suite instead of listing files. The list had already
+      # dropped test_v080_text_extras.py — the regression test for the 0.8.0
+      # text-formatter fix — so the suite could go red without CI noticing.
+      - run: python -m pytest . -v
