@@ -29,9 +29,10 @@ v0.5.0 redaction bridge (tiny_log_v050.py sidecar):
 - install_json_redact_bridge() - bridges REDACT sentinel into json.JSONEncoder
 - safe_log(logger, level, msg, *args, extra=..., redact=True)
 
-Install:
-- pip install tiny-log                       # core, zero deps
-- pip install tiny-log[redact]               # adds tiny-secret-mask
+Install (this project is **unpublished** on PyPI -- the name `tiny-log` is not
+on the index, so none of the `pip install tiny-log` forms below exist):
+- pip install git+https://github.com/hussain-alsaibai/tiny-log.git            # core, zero deps
+- pip install "tiny-log[redact] @ git+https://github.com/hussain-alsaibai/tiny-log.git"  # adds tiny-secret-mask
 - Or copy tiny_log.py + tiny_log_v050.py - single file(s), zero required deps
 
 Repo: https://github.com/hussain-alsaibai/tiny-log

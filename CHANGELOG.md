@@ -3,6 +3,22 @@
 All notable changes to tiny-log are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.1] - 2026-11-20
+
+### Fixed (docs) — the install line named a package that does not exist
+
+`llms.txt` told an agent to run `pip install tiny-log`, which fails with
+*no matching distribution*: **the name is not on PyPI at all**. The README was
+correct the whole time (`pip install git+https://...`); only the file written
+for the agent reader was wrong, and an agent cannot tell a 404 from a missing
+library. The line now uses the git URL and says "unpublished" explicitly.
+
+`test_install_claim.py` was not the gap — `test_llms_drift.py` was: it asserts
+the version header and the API list, and never asserted the one line a reader
+acts on. `test_install_claim.py` adds that, and is red against the previous
+file. The online half (resolving the name on the index) is opt-in via
+`NETWORK_TESTS=1` so CI without network is not a false red.
+
 ## [0.8.0] - 2026-11-09
 
 ### Fixed
