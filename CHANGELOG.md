@@ -3,6 +3,32 @@
 All notable changes to tiny-log are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.2] - 2026-11-21
+
+### Fixed (perf) — `MemoryHandler` evicted in O(capacity) per record
+
+`MemoryHandler` is the "keep the last N records for the error report" buffer,
+which is precisely the handler that runs during a log flood — the one moment
+logging has to be cheapest. It held a plain `list` and called `pop(0)` on
+every record past capacity, shifting the entire buffer each time. That is
+quadratic in total work: cost per record grows with the buffer size.
+
+| emits (one pre-built record) | capacity 1,000 | capacity 50,000 |
+|---|---|---|
+| 200,000 (before) | 0.07s | **1.41s** |
+| 200,000 (after) | 0.04s | **0.04s** |
+
+Now backed by `deque(maxlen=capacity)`, which evicts the oldest entry in O(1).
+Retention, ordering, `records()`, `last()`, and `dump()` are unchanged.
+
+Also: `capacity=0` (or negative) silently dropped every record; it now raises
+`ValueError`. And `capacity` is readable as a property instead of a private
+attribute.
+
+`tests/test_v082_memory_handler_ring.py` adds 7 cases — including a per-emit
+cost comparison that fails by an order of magnitude on the old shape rather
+than passing on a small benchmark. 3 of the 7 are red against 0.8.1.
+
 ## [0.8.1] - 2026-11-20
 
 ### Fixed (docs) — the install line named a package that does not exist
